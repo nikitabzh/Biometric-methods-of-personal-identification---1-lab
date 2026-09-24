@@ -1,7 +1,8 @@
 """
 Лабораторная работа №1: Клавиатурный почерк. Исследование особенностей.
 Программа для сбора и анализа биометрических параметров клавиатурного ввода.
-С сохранением и автозагрузкой истории в JSON-файл.
+С оценкой сложности пароля (уровни: слабый/средний/сложный),
+сохранением истории в JSON и Matplotlib графиками.
 """
 
 import json
@@ -16,7 +17,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import numpy as np
 
-# Имя файла для персистентного хранения истории измерений
 DATA_FILE = "keystroke_history.json"
 
 
@@ -31,7 +31,7 @@ class KeystrokeAnalyzerApp:
         self.session_time_var = tk.StringVar(value="Утро")
         self.keyboard_type_var = tk.StringVar(value="Встроенная (Ноутбук)")
 
-        # Временное хранение нажатий текущего ввода
+        # События текущей попытки
         self.active_keys = {}
         self.current_attempt_events = []
 
@@ -40,8 +40,6 @@ class KeystrokeAnalyzerApp:
 
         self._build_ui()
         self.update_phrase_complexity()
-
-        # Автоматическая загрузка сохраненных измерений при запуске
         self.load_history()
 
     def _build_ui(self):
@@ -68,7 +66,8 @@ class KeystrokeAnalyzerApp:
         )
         kb_combo.grid(row=0, column=5, sticky=tk.W, padx=5, pady=2)
 
-        self.lbl_complexity = ttk.Label(top_frame, text="", foreground="#004488", font=("Segoe UI", 9, "bold"))
+        # Метка со сложностью парольной фразы (с динамическим цветом)
+        self.lbl_complexity = ttk.Label(top_frame, text="", font=("Segoe UI", 9, "bold"))
         self.lbl_complexity.grid(row=1, column=0, columnspan=6, sticky=tk.W, padx=5, pady=5)
 
         # 2. Панель ввода парольной фразы
@@ -96,14 +95,14 @@ class KeystrokeAnalyzerApp:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # 1) Динамика ввода (интервалы Down-Down)
+        # 1) Динамика ввода
         self.tab_flight = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_flight, text="Динамика ввода (Интервалы)")
         self.fig_flight = Figure(figsize=(8, 4), dpi=100)
         self.canvas_flight = FigureCanvasTkAgg(self.fig_flight, master=self.tab_flight)
         self.canvas_flight.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # 2) Скорость (WPM / зн/с) + M[X], D[X]
+        # 2) Скорость + M[X], D[X]
         self.tab_speed = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_speed, text="Гистограмма скорости (M[X], D[X])")
         self.fig_speed = Figure(figsize=(8, 4), dpi=100)
@@ -124,12 +123,12 @@ class KeystrokeAnalyzerApp:
         self.canvas_overlaps = FigureCanvasTkAgg(self.fig_overlaps, master=self.tab_overlaps)
         self.canvas_overlaps.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    # ---------------- Оценка сложности фразы ----------------
+    # ---------------- Оценка сложности парольной фразы ----------------
     def update_phrase_complexity(self):
         phrase = self.phrase_var.get()
         L = len(phrase)
         if L == 0:
-            self.lbl_complexity.config(text="Фраза пуста")
+            self.lbl_complexity.config(text="Фраза пуста", foreground="gray")
             return
 
         has_lower_ru = any('а' <= c <= 'я' or c == 'ё' for c in phrase)
@@ -149,12 +148,31 @@ class KeystrokeAnalyzerApp:
         if A == 0: A = 1
 
         entropy = L * math.log2(A)
+
+        # Определение категории надежности
+        if entropy < 40 or L < 8:
+            level_text = "Очень слабый"
+            level_color = "#D32F2F"
+        elif entropy < 60:
+            level_text = "Слабый"
+            level_color = "#F57C00"
+        elif entropy < 85:
+            level_text = "Средний"
+            level_color = "#E6A100"
+        elif entropy < 120:
+            level_text = "Сложный"
+            level_color = "#2E7D32"
+        else:
+            level_text = "Очень сложный / Криптостойкий"
+            level_color = "#1B5E20"
+
         self.lbl_complexity.config(
-            text=f"Длина (L): {L} симв. | Мощность алфавита (A): {A} | Энтропия (S): {entropy:.2f} бит | "
-                 f"Сложность перебора: {A}^{L} (≈ 10^{L * math.log10(A):.1f})"
+            text=f"Уровень: [{level_text}] | Длина (L): {L} симв. | Мощность (A): {A} | "
+                 f"Энтропия: {entropy:.1f} бит | Подбор: {A}^{L} (≈ 10^{L * math.log10(A):.1f})",
+            foreground=level_color
         )
 
-    # ---------------- Регистрация событий клавиатуры ----------------
+    # ---------------- Регистрация событий клавиш ----------------
     def on_key_press(self, event):
         t = event.time / 1000.0
         key = event.char
@@ -180,7 +198,7 @@ class KeystrokeAnalyzerApp:
         self.current_attempt_events.clear()
         self.input_entry.delete(0, tk.END)
 
-    # ---------------- Сохранение и загрузка истории (JSON) ----------------
+    # ---------------- Работа с историей (JSON) ----------------
     def save_history(self):
         try:
             with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -195,7 +213,6 @@ class KeystrokeAnalyzerApp:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
-                    # При чтении из JSON ключи словарей приводятся к строкам, восстанавливаем int для наложений
                     for record in data:
                         if 'overlaps' in record:
                             record['overlaps'] = {int(k): v for k, v in record['overlaps'].items()}
@@ -214,7 +231,6 @@ class KeystrokeAnalyzerApp:
             if os.path.exists(DATA_FILE):
                 os.remove(DATA_FILE)
             self.lbl_status.config(text="Сохранено попыток: 0")
-            # Очистка холстов
             for fig, canvas in [
                 (self.fig_flight, self.canvas_flight),
                 (self.fig_speed, self.canvas_speed),
@@ -224,7 +240,7 @@ class KeystrokeAnalyzerApp:
                 fig.clear()
                 canvas.draw()
 
-    # ---------------- Завершение попытки ввода ----------------
+    # ---------------- Завершение попытки ----------------
     def on_submit_attempt(self, event=None):
         typed_text = self.input_entry.get()
         target_phrase = self.phrase_var.get()
@@ -282,7 +298,7 @@ class KeystrokeAnalyzerApp:
                     counts[3] += 1
         return counts
 
-    # ---------------- Отрисовка графиков Matplotlib ----------------
+    # ---------------- Отрисовка графиков ----------------
     def redraw_all_plots(self):
         if not self.records:
             return
@@ -290,7 +306,7 @@ class KeystrokeAnalyzerApp:
         last_record = self.records[-1]
         events = last_record['events']
 
-        # 1. График динамики ввода (интервалы времени соседних символов)
+        # 1. График динамики ввода
         self.fig_flight.clear()
         ax_fl = self.fig_flight.add_subplot(111)
         intervals = []
