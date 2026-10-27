@@ -1,13 +1,14 @@
 """
-Лабораторная работа №1: Клавиатурный почерк. Исследование особенностей.
-Программа для сбора и анализа биометрических параметров клавиатурного ввода.
-С оценкой сложности пароля (уровни: слабый/средний/сложный),
-сохранением истории в JSON и Matplotlib графиками.
+Лабораторная работа №1: Клавиатурный почерк. Парольная аутентификация.
+Вариант №1: Генератор паролей длины L из алфавита A + оценка сложности (слабая, средняя, высокая)
++ биометрический анализ клавиатурного ввода (Hold time, Flight time, наложения 1-3 типов, Matplotlib, JSON).
 """
 
 import json
 import math
 import os
+import random
+import string
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -20,18 +21,25 @@ import numpy as np
 DATA_FILE = "keystroke_history.json"
 
 
-class KeystrokeAnalyzerApp:
+class KeystrokeBiometricsApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Биометрия: Исследование клавиатурного почерка")
-        self.root.geometry("1100x840")
+        self.root.title("Лабораторная работа №1: Парольная аутентификация и биометрия почерка (Вариант 1)")
+        self.root.geometry("1140x880")
 
-        # Переменные интерфейса
-        self.phrase_var = tk.StringVar(value="биометрическая защита информации")
-        self.session_time_var = tk.StringVar(value="Утро")
-        self.keyboard_type_var = tk.StringVar(value="Встроенная (Ноутбук)")
+        # Переменные генератора паролей (Вариант 1)
+        self.phrase_var = tk.StringVar(value="ZdesParol2205#")
+        self.length_var = tk.IntVar(value=14)
+        self.use_lower_var = tk.BooleanVar(value=True)
+        self.use_upper_var = tk.BooleanVar(value=True)
+        self.use_digits_var = tk.BooleanVar(value=True)
+        self.use_special_var = tk.BooleanVar(value=True)
 
-        # События текущей попытки
+        # Параметры биометрического эксперимента
+        self.session_time_var = tk.StringVar(value="День")
+        self.keyboard_type_var = tk.StringVar(value="Механическая")
+
+        # Структуры регистрации нажатий клавиш
         self.active_keys = {}
         self.current_attempt_events = []
 
@@ -43,38 +51,55 @@ class KeystrokeAnalyzerApp:
         self.load_history()
 
     def _build_ui(self):
-        # 1. Верхняя панель: Настройки эксперимента
-        top_frame = ttk.LabelFrame(self.root, text="Параметры эксперимента", padding=10)
-        top_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        # =====================================================================
+        # 1. ПАНЕЛЬ ВАРИАНТА №1: ГЕНЕРАТОР ПАРОЛЕЙ И ОЦЕНКА СЛОЖНОСТИ
+        # =====================================================================
+        gen_frame = ttk.LabelFrame(self.root, text="Задание Варианта №1: Генерация паролей и оценка сложности", padding=10)
+        gen_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
-        ttk.Label(top_frame, text="Парольная фраза:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-        phrase_entry = ttk.Entry(top_frame, textvariable=self.phrase_var, width=38)
-        phrase_entry.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
-        phrase_entry.bind("<KeyRelease>", lambda e: self.update_phrase_complexity())
+        # Настройки генератора
+        opts_box = ttk.Frame(gen_frame)
+        opts_box.pack(fill=tk.X, pady=2)
 
-        ttk.Label(top_frame, text="Время суток:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
-        session_combo = ttk.Combobox(
-            top_frame, textvariable=self.session_time_var,
-            values=["Утро", "День", "Вечер", "Ночь"], width=10, state="readonly"
-        )
-        session_combo.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(opts_box, text="Длина (L):").pack(side=tk.LEFT, padx=3)
+        spin_len = ttk.Spinbox(opts_box, from_=4, to=64, textvariable=self.length_var, width=5)
+        spin_len.pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(top_frame, text="Клавиатура:").grid(row=0, column=4, sticky=tk.W, padx=5, pady=2)
-        kb_combo = ttk.Combobox(
-            top_frame, textvariable=self.keyboard_type_var,
-            values=["Встроенная (Ноутбук)", "Внешняя (Мембранная)", "Механическая"], width=22, state="readonly"
-        )
-        kb_combo.grid(row=0, column=5, sticky=tk.W, padx=5, pady=2)
+        ttk.Checkbutton(opts_box, text="a-z (26)", variable=self.use_lower_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(opts_box, text="A-Z (26)", variable=self.use_upper_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(opts_box, text="0-9 (10)", variable=self.use_digits_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(opts_box, text="Спецсимволы (32)", variable=self.use_special_var).pack(side=tk.LEFT, padx=5)
 
-        # Метка со сложностью парольной фразы (с динамическим цветом)
-        self.lbl_complexity = ttk.Label(top_frame, text="", font=("Segoe UI", 9, "bold"))
-        self.lbl_complexity.grid(row=1, column=0, columnspan=6, sticky=tk.W, padx=5, pady=5)
+        ttk.Button(opts_box, text="Сгенерировать пароль (L, A)", command=self.generate_random_password).pack(side=tk.LEFT, padx=15)
 
-        # 2. Панель ввода парольной фразы
-        input_frame = ttk.LabelFrame(self.root, text="Поле для набора пароля", padding=10)
+        # Строка парольной фразы
+        phrase_box = ttk.Frame(gen_frame)
+        phrase_box.pack(fill=tk.X, pady=4)
+
+        ttk.Label(phrase_box, text="Парольная фраза:").pack(side=tk.LEFT, padx=3)
+        entry_phrase = ttk.Entry(phrase_box, textvariable=self.phrase_var, font=("Courier New", 11), width=40)
+        entry_phrase.pack(side=tk.LEFT, padx=5)
+        entry_phrase.bind("<KeyRelease>", lambda e: self.update_phrase_complexity())
+
+        ttk.Label(phrase_box, text="Время суток:").pack(side=tk.LEFT, padx=(15, 3))
+        combo_time = ttk.Combobox(phrase_box, textvariable=self.session_time_var, values=["Утро", "День", "Вечер", "Ночь"], width=8, state="readonly")
+        combo_time.pack(side=tk.LEFT, padx=3)
+
+        ttk.Label(phrase_box, text="Клавиатура:").pack(side=tk.LEFT, padx=(15, 3))
+        combo_kb = ttk.Combobox(phrase_box, textvariable=self.keyboard_type_var, values=["Механическая", "Встроенная (Ноутбук)", "Внешняя (Мембранная)"], width=22, state="readonly")
+        combo_kb.pack(side=tk.LEFT, padx=3)
+
+        # Информационная строка сложности
+        self.lbl_complexity = ttk.Label(gen_frame, text="", font=("Segoe UI", 9, "bold"))
+        self.lbl_complexity.pack(anchor=tk.W, pady=3)
+
+        # =====================================================================
+        # 2. ПАНЕЛЬ ВВОДА ДЛЯ ИССЛЕДОВАНИЯ КЛАВИАТУРНОГО ПОЧЕРКА
+        # =====================================================================
+        input_frame = ttk.LabelFrame(self.root, text="Исследование клавиатурного ввода", padding=10)
         input_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
-        ttk.Label(input_frame, text="Наберите заданную фразу строго без ошибок и нажмите Enter:").pack(anchor=tk.W)
+        ttk.Label(input_frame, text="Наберите заданную парольную фразу строго без ошибок и нажмите Enter:").pack(anchor=tk.W)
         self.input_entry = ttk.Entry(input_frame, font=("Courier New", 12), width=70)
         self.input_entry.pack(anchor=tk.W, pady=5, fill=tk.X)
 
@@ -86,44 +111,67 @@ class KeystrokeAnalyzerApp:
         btn_box.pack(anchor=tk.W, pady=2)
         ttk.Button(btn_box, text="Зафиксировать попытку (Enter)", command=self.on_submit_attempt).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_box, text="Сбросить ввод", command=self.clear_current_input).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_box, text="Очистить всю базу", command=self.reset_all_data).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_box, text="Очистить всю базу измерений", command=self.reset_all_data).pack(side=tk.LEFT, padx=5)
 
         self.lbl_status = ttk.Label(input_frame, text="Сохранено попыток: 0", font=("Segoe UI", 9, "italic"))
         self.lbl_status.pack(anchor=tk.E)
 
-        # 3. Вкладки визуализации с Matplotlib
+        # =====================================================================
+        # 3. ВКЛАДКИ ВИЗУАЛИЗАЦИИ РЕЗУЛЬТАТОВ (MATPLOTLIB)
+        # =====================================================================
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # 1) Динамика ввода
+        # 1. Динамика ввода
         self.tab_flight = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_flight, text="Динамика ввода (Интервалы)")
         self.fig_flight = Figure(figsize=(8, 4), dpi=100)
         self.canvas_flight = FigureCanvasTkAgg(self.fig_flight, master=self.tab_flight)
         self.canvas_flight.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # 2) Скорость + M[X], D[X]
+        # 2. Скорость + M[X], D[X]
         self.tab_speed = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_speed, text="Гистограмма скорости (M[X], D[X])")
         self.fig_speed = Figure(figsize=(8, 4), dpi=100)
         self.canvas_speed = FigureCanvasTkAgg(self.fig_speed, master=self.tab_speed)
         self.canvas_speed.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # 3) Время удержания (Hold Time)
+        # 3. Время удержания
         self.tab_hold = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_hold, text="Время удержания (Hold Time)")
         self.fig_hold = Figure(figsize=(8, 4), dpi=100)
         self.canvas_hold = FigureCanvasTkAgg(self.fig_hold, master=self.tab_hold)
         self.canvas_hold.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # 4) Наложения клавиш
+        # 4. Наложения
         self.tab_overlaps = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_overlaps, text="Наложения клавиш (Тип 1, 2, 3)")
         self.fig_overlaps = Figure(figsize=(8, 4), dpi=100)
         self.canvas_overlaps = FigureCanvasTkAgg(self.fig_overlaps, master=self.tab_overlaps)
         self.canvas_overlaps.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    # ---------------- Оценка сложности парольной фразы ----------------
+    # ---------------- ГЕНЕРАТОР ПАРОЛЕЙ (ВАРИАНТ №1) ----------------
+    def generate_random_password(self):
+        alphabet = ""
+        if self.use_lower_var.get():
+            alphabet += string.ascii_lowercase
+        if self.use_upper_var.get():
+            alphabet += string.ascii_uppercase
+        if self.use_digits_var.get():
+            alphabet += string.digits
+        if self.use_special_var.get():
+            alphabet += "!@#$%^&*()-_=+[]{}|;:,.<>?"
+
+        if not alphabet:
+            messagebox.showwarning("Ошибка", "Выберите хотя бы один набор символов алфавита!")
+            return
+
+        L = max(4, self.length_var.get())
+        new_password = "".join(random.choice(alphabet) for _ in range(L))
+        self.phrase_var.set(new_password)
+        self.update_phrase_complexity()
+
+    # ---------------- ОЦЕНКА СЛОЖНОСТИ ПАРОЛЬНОЙ ФРАЗЫ ----------------
     def update_phrase_complexity(self):
         phrase = self.phrase_var.get()
         L = len(phrase)
@@ -147,47 +195,42 @@ class KeystrokeAnalyzerApp:
         if has_special: A += 32
         if A == 0: A = 1
 
-        entropy = L * math.log2(A)
+        # Формула Хартли: H = L * log2(A)
+        H = L * math.log2(A)
 
-        # Определение категории надежности
-        if entropy < 40 or L < 8:
-            level_text = "Очень слабый"
-            level_color = "#D32F2F"
-        elif entropy < 60:
-            level_text = "Слабый"
-            level_color = "#F57C00"
-        elif entropy < 85:
-            level_text = "Средний"
-            level_color = "#E6A100"
-        elif entropy < 120:
-            level_text = "Сложный"
-            level_color = "#2E7D32"
+        # Классификация сложности (слабая, средняя, высокая) согласно Варианту 1
+        if H < 60 or L < 8:
+            level = "Слабая"
+            color = "#D32F2F"  # Красный
+        elif H < 85:
+            level = "Средняя"
+            color = "#F57C00"  # Оранжевый
         else:
-            level_text = "Очень сложный / Криптостойкий"
-            level_color = "#1B5E20"
+            level = "Высокая"
+            color = "#2E7D32"  # Зеленый
 
         self.lbl_complexity.config(
-            text=f"Уровень: [{level_text}] | Длина (L): {L} симв. | Мощность (A): {A} | "
-                 f"Энтропия: {entropy:.1f} бит | Подбор: {A}^{L} (≈ 10^{L * math.log10(A):.1f})",
-            foreground=level_color
+            text=f"Сложность: [{level}] | Длина (L): {L} симв. | Алфавит (A): {A} | "
+                 f"Энтропия (H): {H:.1f} бит | Комбинаций (S=A^L): {A}^{L} (≈ 10^{L * math.log10(A):.1f})",
+            foreground=color
         )
 
-    # ---------------- Регистрация событий клавиш ----------------
+    # ---------------- ОБРАБОТЧИКИ НАЖАТИЯ КЛАВИШ ----------------
     def on_key_press(self, event):
         t = event.time / 1000.0
-        key = event.char
-        if not key or (ord(key) < 32 and ord(key) != 13):
+        k = event.char
+        if not k or (ord(k) < 32 and ord(k) != 13):
             return
-        if key not in self.active_keys:
-            self.active_keys[key] = t
+        if k not in self.active_keys:
+            self.active_keys[k] = t
 
     def on_key_release(self, event):
         t = event.time / 1000.0
-        key = event.char
-        if key in self.active_keys:
-            t_down = self.active_keys.pop(key)
+        k = event.char
+        if k in self.active_keys:
+            t_down = self.active_keys.pop(k)
             self.current_attempt_events.append({
-                'key': key,
+                'key': k,
                 'down': t_down,
                 'up': t,
                 'hold': max(0.001, t - t_down)
@@ -198,13 +241,13 @@ class KeystrokeAnalyzerApp:
         self.current_attempt_events.clear()
         self.input_entry.delete(0, tk.END)
 
-    # ---------------- Работа с историей (JSON) ----------------
+    # ---------------- СОХРАНЕНИЕ / ЗАГРУЗКА ИСТОРИИ (JSON) ----------------
     def save_history(self):
         try:
             with open(DATA_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.records, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            messagebox.showerror("Ошибка сохранения", f"Не удалось сохранить данные: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось сохранить данные: {e}")
 
     def load_history(self):
         if not os.path.exists(DATA_FILE):
@@ -220,12 +263,12 @@ class KeystrokeAnalyzerApp:
                     self.lbl_status.config(text=f"Сохранено попыток: {len(self.records)}")
                     self.redraw_all_plots()
         except Exception as e:
-            print(f"Ошибка при загрузке истории: {e}")
+            print(f"Ошибка загрузки истории: {e}")
 
     def reset_all_data(self):
         if not self.records:
             return
-        if messagebox.askyesno("Подтверждение", "Вы уверены, что хотите удалить ВСЮ историю измерений из файла?"):
+        if messagebox.askyesno("Подтверждение", "Удалить ВСЮ накопленную историю измерений из файла?"):
             self.records.clear()
             self.clear_current_input()
             if os.path.exists(DATA_FILE):
@@ -240,7 +283,7 @@ class KeystrokeAnalyzerApp:
                 fig.clear()
                 canvas.draw()
 
-    # ---------------- Завершение попытки ----------------
+    # ---------------- ОБРАБОТКА ПОПЫТКИ ВВОДА ----------------
     def on_submit_attempt(self, event=None):
         typed_text = self.input_entry.get()
         target_phrase = self.phrase_var.get()
@@ -248,8 +291,7 @@ class KeystrokeAnalyzerApp:
         if typed_text != target_phrase:
             messagebox.showwarning(
                 "Ошибка набора",
-                "Введенная строка не совпадает с эталонной фразой!\n"
-                "Для чистоты биометрического анализа повторите попытку без ошибок."
+                "Введенная строка не совпадает с эталонной фразой!\nПовторите ввод строго без ошибок."
             )
             self.clear_current_input()
             return
@@ -281,8 +323,14 @@ class KeystrokeAnalyzerApp:
         self.clear_current_input()
         self.redraw_all_plots()
 
-    # ---------------- Анализ наложений ----------------
+    # ---------------- ДЕТЕКЦИЯ НАЛОЖЕНИЙ (ТИП 1, 2, 3) ----------------
     def detect_overlaps(self, events):
+        """
+        Классификация наложений согласно методичке:
+        Тип 1: K1↓ -> K2↓ -> K1↑ -> K2↑ (d1 <= d2 < u1 < u2)
+        Тип 2: K2↓ -> K1↓ -> K2↑ -> K1↑ (обратный порядок отпускания)
+        Тип 3: K1 внутри K2 (d1 <= d2 < u2 <= u1)
+        """
         counts = {1: 0, 2: 0, 3: 0}
         n = len(events)
         for i in range(n - 1):
@@ -292,13 +340,19 @@ class KeystrokeAnalyzerApp:
             d2, u2 = e2['down'], e2['up']
 
             if d2 < u1:
-                if u1 < u2:
+                # Вторая клавиша нажата до отпускания первой
+                if d1 <= d2 and u1 < u2:
                     counts[1] += 1
-                elif u2 <= u1:
+                elif d1 <= d2 and u2 <= u1:
                     counts[3] += 1
+
+            if u2 < u1 and d2 < u2:
+                if not (d1 <= d2 and u2 <= u1):
+                    counts[2] += 1
+
         return counts
 
-    # ---------------- Отрисовка графиков ----------------
+    # ---------------- ОТРИСОВКА ГРАФИКОВ (MATPLOTLIB) ----------------
     def redraw_all_plots(self):
         if not self.records:
             return
@@ -306,7 +360,7 @@ class KeystrokeAnalyzerApp:
         last_record = self.records[-1]
         events = last_record['events']
 
-        # 1. График динамики ввода
+        # 1. Динамика ввода (Down-Down интервалы)
         self.fig_flight.clear()
         ax_fl = self.fig_flight.add_subplot(111)
         intervals = []
@@ -326,7 +380,7 @@ class KeystrokeAnalyzerApp:
         self.fig_flight.tight_layout()
         self.canvas_flight.draw()
 
-        # 2. Гистограмма скорости ввода и стат. параметры (M[X], D[X])
+        # 2. Гистограмма скорости + M[X], D[X]
         self.fig_speed.clear()
         ax_sp = self.fig_speed.add_subplot(111)
 
@@ -393,5 +447,5 @@ class KeystrokeAnalyzerApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = KeystrokeAnalyzerApp(root)
+    app = KeystrokeBiometricsApp(root)
     root.mainloop()
